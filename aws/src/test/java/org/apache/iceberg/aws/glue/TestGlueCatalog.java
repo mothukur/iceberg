@@ -28,11 +28,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.iceberg.BaseMetastoreTableOperations;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.aws.AwsProperties;
+import org.apache.iceberg.aws.s3.S3FileIO;
 import org.apache.iceberg.aws.s3.S3FileIOProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.ValidationException;
+import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
@@ -668,8 +670,88 @@ public class TestGlueCatalog {
     GlueTableOperations glueTableOperations =
         (GlueTableOperations)
             glueCatalog.newTableOps(TableIdentifier.of(Namespace.of("db"), "table"));
-    Map<String, String> tableCatalogProperties = glueTableOperations.tableCatalogProperties();
+    Map<String, String> tableCatalogProperties = glueTableOperations.io().properties();
 
+    assertThat(tableCatalogProperties)
+        .containsEntry(
+            S3FileIOProperties.WRITE_TAGS_PREFIX.concat(S3FileIOProperties.S3_TAG_ICEBERG_TABLE),
+            "table")
+        .containsEntry(
+            S3FileIOProperties.WRITE_TAGS_PREFIX.concat(
+                S3FileIOProperties.S3_TAG_ICEBERG_NAMESPACE),
+            "db");
+  }
+
+  @Test
+  public void testFileIOBuilder() {
+    AwsProperties awsProperties = new AwsProperties();
+    S3FileIOProperties s3FileIOProperties = new S3FileIOProperties();
+    List<FileIO> fileIOs = Lists.newArrayList();
+    GlueCatalog catalog =
+        new GlueCatalog(
+            (props) -> {
+              FileIO fileIO = new S3FileIO();
+              fileIO.initialize(props);
+              fileIOs.add(fileIO);
+              return fileIO;
+            });
+    catalog.initialize(
+        CATALOG_NAME,
+        WAREHOUSE_PATH,
+        awsProperties,
+        s3FileIOProperties,
+        glue,
+        LockManagers.defaultLockManager(),
+        ImmutableMap.of());
+    GlueTableOperations glueTableOperations =
+        (GlueTableOperations) catalog.newTableOps(TableIdentifier.of(Namespace.of("db"), "table"));
+
+    assertThat(fileIOs.size()).isEqualTo(1);
+    assertThat(glueTableOperations.io()).isEqualTo(fileIOs.get(0));
+    Map<String, String> tableCatalogProperties = glueTableOperations.io().properties();
+    assertThat(tableCatalogProperties)
+        .doesNotContainEntry(
+            S3FileIOProperties.WRITE_TAGS_PREFIX.concat(S3FileIOProperties.S3_TAG_ICEBERG_TABLE),
+            "table")
+        .doesNotContainEntry(
+            S3FileIOProperties.WRITE_TAGS_PREFIX.concat(
+                S3FileIOProperties.S3_TAG_ICEBERG_NAMESPACE),
+            "db");
+  }
+
+  @Test
+  public void testFileIOBuilderWithTableLevelS3TagProperties() {
+    Map<String, String> properties =
+        ImmutableMap.of(
+            S3FileIOProperties.WRITE_TABLE_TAG_ENABLED,
+            "true",
+            S3FileIOProperties.WRITE_NAMESPACE_TAG_ENABLED,
+            "true");
+    AwsProperties awsProperties = new AwsProperties(properties);
+    S3FileIOProperties s3FileIOProperties = new S3FileIOProperties(properties);
+    List<FileIO> fileIOs = Lists.newArrayList();
+    GlueCatalog catalog =
+        new GlueCatalog(
+            (props) -> {
+              FileIO fileIO = new S3FileIO();
+              fileIO.initialize(props);
+              fileIOs.add(fileIO);
+              return fileIO;
+            });
+    catalog.initialize(
+        CATALOG_NAME,
+        WAREHOUSE_PATH,
+        awsProperties,
+        s3FileIOProperties,
+        glue,
+        LockManagers.defaultLockManager(),
+        properties);
+    GlueTableOperations glueTableOperations =
+        (GlueTableOperations) catalog.newTableOps(TableIdentifier.of(Namespace.of("db"), "table"));
+
+    assertThat(fileIOs.size()).isEqualTo(2);
+    assertThat(glueTableOperations.io()).isEqualTo(fileIOs.get(1));
+    Map<String, String> tableCatalogProperties = glueTableOperations.io().properties();
     assertThat(tableCatalogProperties)
         .containsEntry(
             S3FileIOProperties.WRITE_TAGS_PREFIX.concat(S3FileIOProperties.S3_TAG_ICEBERG_TABLE),
